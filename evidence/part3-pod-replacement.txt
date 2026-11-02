@@ -1,0 +1,92 @@
+=== PART 3: Pod deletion and replacement ===
+$ kubectl get svc inventory-service
+NAME                TYPE        CLUSTER-IP    EXTERNAL-IP   PORT(S)   AGE
+inventory-service   ClusterIP   10.96.45.26   <none>        80/TCP    73s
+
+$ kubectl get pods -l app=inventory -o wide
+NAME                         READY   STATUS    RESTARTS   AGE   IP           NODE                          NOMINATED NODE   READINESS GATES
+inventory-54699775cc-89dpg   1/1     Running   0          73s   10.244.0.6   inventory-lab-control-plane   <none>           <none>
+inventory-54699775cc-rd67c   1/1     Running   0          73s   10.244.0.5   inventory-lab-control-plane   <none>           <none>
+
+# Deleting inventory-54699775cc-89dpg
+$ kubectl delete pod inventory-54699775cc-89dpg --wait=false
+pod "inventory-54699775cc-89dpg" deleted from default namespace
+
+$ kubectl get pods -l app=inventory -o wide
+NAME                         READY   STATUS              RESTARTS   AGE   IP           NODE                          NOMINATED NODE   READINESS GATES
+inventory-54699775cc-89dpg   1/1     Terminating         0          74s   10.244.0.6   inventory-lab-control-plane   <none>           <none>
+inventory-54699775cc-rd67c   1/1     Running             0          74s   10.244.0.5   inventory-lab-control-plane   <none>           <none>
+inventory-54699775cc-wqmvr   0/1     ContainerCreating   0          1s    <none>       inventory-lab-control-plane   <none>           <none>
+
+Waiting for deployment "inventory" rollout to finish: 1 of 2 updated replicas are available...
+deployment "inventory" successfully rolled out
+
+# After recovery:
+$ kubectl get pods -l app=inventory -o wide
+NAME                         READY   STATUS        RESTARTS   AGE   IP           NODE                          NOMINATED NODE   READINESS GATES
+inventory-54699775cc-89dpg   1/1     Terminating   0          80s   10.244.0.6   inventory-lab-control-plane   <none>           <none>
+inventory-54699775cc-rd67c   1/1     Running       0          80s   10.244.0.5   inventory-lab-control-plane   <none>           <none>
+inventory-54699775cc-wqmvr   1/1     Running       0          7s    10.244.0.8   inventory-lab-control-plane   <none>           <none>
+
+$ kubectl get svc inventory-service
+NAME                TYPE        CLUSTER-IP    EXTERNAL-IP   PORT(S)   AGE
+inventory-service   ClusterIP   10.96.45.26   <none>        80/TCP    80s
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=inventory-service (ip / pod / ready)
+10.244.0.5	inventory-54699775cc-rd67c	ready=true
+10.244.0.6	inventory-54699775cc-89dpg	ready=false
+10.244.0.8	inventory-54699775cc-wqmvr	ready=true
+
+# ReplicaSet events showing the replacement:
+80s         Normal   SuccessfulCreate   replicaset/inventory-54699775cc          Created pod: inventory-54699775cc-rd67c
+80s         Normal   SuccessfulCreate   replicaset/inventory-54699775cc          Created pod: inventory-54699775cc-89dpg
+79s         Normal   SuccessfulCreate   replicaset/inventory-client-5899f6f4f5   Created pod: inventory-client-5899f6f4f5-bd52z
+7s          Normal   SuccessfulCreate   replicaset/inventory-54699775cc          Created pod: inventory-54699775cc-wqmvr
+
+# Client log across the deletion (last 40s):
+$ kubectl logs deployment/inventory-client --since=40s
+19:32:52 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:32:53 OK  served_by=inventory-54699775cc-89dpg pod_ip=10.244.0.6
+19:32:54 OK  served_by=inventory-54699775cc-89dpg pod_ip=10.244.0.6
+19:32:55 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:32:56 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:32:57 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:32:58 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:32:59 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:00 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:01 OK  served_by=inventory-54699775cc-89dpg pod_ip=10.244.0.6
+19:33:02 OK  served_by=inventory-54699775cc-89dpg pod_ip=10.244.0.6
+19:33:03 OK  served_by=inventory-54699775cc-89dpg pod_ip=10.244.0.6
+19:33:04 OK  served_by=inventory-54699775cc-89dpg pod_ip=10.244.0.6
+19:33:05 OK  served_by=inventory-54699775cc-89dpg pod_ip=10.244.0.6
+19:33:06 OK  served_by=inventory-54699775cc-89dpg pod_ip=10.244.0.6
+19:33:07 OK  served_by=inventory-54699775cc-89dpg pod_ip=10.244.0.6
+19:33:08 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:09 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:10 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:11 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:12 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:13 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:14 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:15 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:16 OK  served_by=inventory-54699775cc-wqmvr pod_ip=10.244.0.8
+19:33:17 OK  served_by=inventory-54699775cc-wqmvr pod_ip=10.244.0.8
+19:33:18 OK  served_by=inventory-54699775cc-wqmvr pod_ip=10.244.0.8
+19:33:19 OK  served_by=inventory-54699775cc-wqmvr pod_ip=10.244.0.8
+19:33:20 OK  served_by=inventory-54699775cc-wqmvr pod_ip=10.244.0.8
+19:33:21 OK  served_by=inventory-54699775cc-wqmvr pod_ip=10.244.0.8
+19:33:22 OK  served_by=inventory-54699775cc-wqmvr pod_ip=10.244.0.8
+19:33:24 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:25 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:26 OK  served_by=inventory-54699775cc-wqmvr pod_ip=10.244.0.8
+19:33:27 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:28 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:29 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:33:30 OK  served_by=inventory-54699775cc-wqmvr pod_ip=10.244.0.8
+19:33:31 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+
+# Requests per replica in the last 15s (new Pod is serving):
+$ kubectl logs deployment/inventory-client --since=15s | grep -o 'served_by=[^ ]*' | sort | uniq -c
+   6 served_by=inventory-54699775cc-rd67c
+   9 served_by=inventory-54699775cc-wqmvr
+

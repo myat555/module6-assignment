@@ -1,0 +1,45 @@
+=== PART 2: Readiness failure and recovery ===
+# Making inventory-54699775cc-89dpg fail its readiness probe
+$ kubectl exec inventory-54699775cc-89dpg -- touch /tmp/unready
+
+$ kubectl get pods -l app=inventory -o wide
+NAME                         READY   STATUS    RESTARTS   AGE   IP           NODE                          NOMINATED NODE   READINESS GATES
+inventory-54699775cc-89dpg   0/1     Running   0          36s   10.244.0.6   inventory-lab-control-plane   <none>           <none>
+inventory-54699775cc-rd67c   1/1     Running   0          36s   10.244.0.5   inventory-lab-control-plane   <none>           <none>
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=inventory-service (ip / pod / ready)
+10.244.0.5	inventory-54699775cc-rd67c	ready=true
+10.244.0.6	inventory-54699775cc-89dpg	ready=false
+
+$ kubectl describe pod inventory-54699775cc-89dpg | grep -E 'Status:|Ready:|Restart Count|Readiness probe failed'
+Status:           Running
+    Ready:          False
+    Restart Count:  0
+  Warning  Unhealthy  36s              kubelet            spec.containers{inventory}: Readiness probe failed: Get "http://10.244.0.6:8080/ready": dial tcp 10.244.0.6:8080: connect: connection refused
+  Warning  Unhealthy  2s (x4 over 6s)  kubelet            spec.containers{inventory}: Readiness probe failed: HTTP probe failed with statuscode: 503
+
+# Pod is still running - it answers directly on its own IP:
+$ kubectl exec deployment/inventory-client -- python -c import urllib.request; print(urllib.request.urlopen('http://10.244.0.6:8080/healthz').read().decode())
+{"status": "alive", "pod": "inventory-54699775cc-89dpg"}
+
+# Requests per replica during the 15s that inventory-54699775cc-89dpg was unready:
+$ kubectl logs deployment/inventory-client --since=15s | grep -o 'served_by=[^ ]*' | sort | uniq -c
+  15 served_by=inventory-54699775cc-rd67c
+
+# Restoring readiness on inventory-54699775cc-89dpg
+$ kubectl exec inventory-54699775cc-89dpg -- rm /tmp/unready
+
+$ kubectl get pods -l app=inventory -o wide
+NAME                         READY   STATUS    RESTARTS   AGE   IP           NODE                          NOMINATED NODE   READINESS GATES
+inventory-54699775cc-89dpg   1/1     Running   0          58s   10.244.0.6   inventory-lab-control-plane   <none>           <none>
+inventory-54699775cc-rd67c   1/1     Running   0          58s   10.244.0.5   inventory-lab-control-plane   <none>           <none>
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=inventory-service (ip / pod / ready)
+10.244.0.5	inventory-54699775cc-rd67c	ready=true
+10.244.0.6	inventory-54699775cc-89dpg	ready=true
+
+# Requests per replica in the 15s after recovery:
+$ kubectl logs deployment/inventory-client --since=15s | grep -o 'served_by=[^ ]*' | sort | uniq -c
+   7 served_by=inventory-54699775cc-89dpg
+   7 served_by=inventory-54699775cc-rd67c
+

@@ -1,0 +1,46 @@
+=== PART 1: Deployment, Service, and load balancing ===
+$ kubectl get deploy inventory inventory-client
+NAME               READY   UP-TO-DATE   AVAILABLE   AGE
+inventory          2/2     2            2           9s
+inventory-client   1/1     1            1           8s
+
+$ kubectl get pods -o wide
+NAME                                READY   STATUS    RESTARTS   AGE   IP           NODE                          NOMINATED NODE   READINESS GATES
+inventory-54699775cc-89dpg          1/1     Running   0          9s    10.244.0.6   inventory-lab-control-plane   <none>           <none>
+inventory-54699775cc-rd67c          1/1     Running   0          9s    10.244.0.5   inventory-lab-control-plane   <none>           <none>
+inventory-client-5899f6f4f5-bd52z   1/1     Running   0          8s    10.244.0.7   inventory-lab-control-plane   <none>           <none>
+
+$ kubectl get svc inventory-service
+NAME                TYPE        CLUSTER-IP    EXTERNAL-IP   PORT(S)   AGE
+inventory-service   ClusterIP   10.96.45.26   <none>        80/TCP    9s
+
+$ kubectl get endpointslices -l kubernetes.io/service-name=inventory-service (ip / pod / ready)
+10.244.0.5	inventory-54699775cc-rd67c	ready=true
+10.244.0.6	inventory-54699775cc-89dpg	ready=true
+
+# Client resolves the Service name through cluster DNS:
+$ kubectl exec deployment/inventory-client -- python -c import socket; print('inventory-service ->', socket.gethostbyname('inventory-service'))
+inventory-service -> 10.96.45.26
+
+# One request through the Service name from inside the client Pod:
+$ kubectl exec deployment/inventory-client -- python -c import urllib.request; print(urllib.request.urlopen('http://inventory-service/items').read().decode())
+{"served_by": "inventory-54699775cc-rd67c", "pod_ip": "10.244.0.5", "items": [{"sku": "A-100", "name": "widget", "qty": 42}, {"sku": "B-200", "name": "gadget", "qty": 7}, {"sku": "C-300", "name": "doohickey", "qty": 0}]}
+
+# Client log (last 10 lines):
+$ kubectl logs deployment/inventory-client --tail=10
+19:32:17 OK  served_by=inventory-54699775cc-89dpg pod_ip=10.244.0.6
+19:32:18 OK  served_by=inventory-54699775cc-89dpg pod_ip=10.244.0.6
+19:32:19 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:32:20 OK  served_by=inventory-54699775cc-89dpg pod_ip=10.244.0.6
+19:32:21 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:32:22 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:32:23 OK  served_by=inventory-54699775cc-89dpg pod_ip=10.244.0.6
+19:32:24 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+19:32:25 OK  served_by=inventory-54699775cc-89dpg pod_ip=10.244.0.6
+19:32:26 OK  served_by=inventory-54699775cc-rd67c pod_ip=10.244.0.5
+
+# Requests per replica over the last 20 seconds:
+$ kubectl logs deployment/inventory-client --since=20s | grep -o 'served_by=[^ ]*' | sort | uniq -c
+  11 served_by=inventory-54699775cc-89dpg
+   9 served_by=inventory-54699775cc-rd67c
+
